@@ -24,6 +24,10 @@ public actor WhisperStreamingTranscriber: StreamingTranscriber {
     private let pauseRMSThreshold: Float = 0.010
     /// Peak amplitude below this over the whole buffer counts as silence.
     private let silencePeakThreshold: Float = 0.020
+    /// Minimum fraction of loud frames that must be voiced (periodic speech) for
+    /// a buffer to be transcribed. Keyboard clicks and instrumental music fall
+    /// below this and are discarded instead of fed to Whisper as noise.
+    private let voicedSpeechRatioThreshold: Float = 0.20
 
     private var pending: [Float] = []
     private var emittedMs: Int64 = 0
@@ -88,6 +92,13 @@ public actor WhisperStreamingTranscriber: StreamingTranscriber {
             return
         }
 
+        // Reject buffers dominated by non-speech sounds (keyboard clicks, music)
+        // so Whisper isn't fed noise that it would transcribe as junk text.
+        guard containsVoicedSpeech(buffer) else {
+            emittedMs += durationMs
+            return
+        }
+
         let segments = try await engine.transcribe(samples: buffer, sampleRate: Int32(sampleRate))
         let baseMs = emittedMs
         emittedMs += durationMs
@@ -138,6 +149,51 @@ public actor WhisperStreamingTranscriber: StreamingTranscriber {
             .replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: "_", with: "")
         return normalized == "BLANKAUDIO"
+    }
+
+    /// Voice-activity gate that rejects buffers dominated by non-speech sounds
+    /// such as keyboard clicks or background music. Speech has a periodic
+    /// (voiced) harmonic structure in the 80–350 Hz pitch range across a
+    /// meaningful fraction of frames; keyboard clicks are impulsive/broadband
+    /// with almost no voiced frames, and instrumental music rarely sustains a
+    /// speech-range fundamental. Returns true only when enough loud frames are
+    /// voiced.
+    private func containsVoicedSpeech(_ samples: [Float]) -> Bool {
+        let frameSize = 2048
+        guard samples.count >= frameSize else { return false }
+
+        let minLag = max(1, sampleRate / 350)
+        let maxLag = min(frameSize - 1, sampleRate / 80)
+        guard maxLag > minLag else { return false }
+
+        var totalEnergy: Float = 0
+        for sample in samples { totalEnergy += sample * sample }
+        let globalRMS = (totalEnergy / Float(samples.count)).squareRoot()
+        let voicedThreshold = max(0.01, globalRMS * 0.5)
+
+        var analyzedFrames = 0
+        var voicedFrames = 0
+        var start = 0
+        while start + frameSize <= samples.count {
+            var energy: Float = 0
+            var j = start
+            while j < start + frameSize {
+                energy += samples[j] * samples[j]
+                j += 1
+            }
+            let rms = (energy / Float(frameSize)).squareRoot()
+            if rms >= voicedThreshold, energy > 0 {
+                analyzedFrames += 1
+                if framePitch(samples, start: start, frameSize: frameSize, minLag: minLag, maxLag: maxLag, energy: energy) != nil {
+                    voicedFrames += 1
+                }
+            }
+            start += frameSize / 2 // 50% overlap
+        }
+
+        guard analyzedFrames > 0 else { return false }
+        let voicedRatio = Float(voicedFrames) / Float(analyzedFrames)
+        return voicedRatio >= voicedSpeechRatioThreshold
     }
 
     /// Estimates the mean fundamental frequency (pitch) of the buffer via
