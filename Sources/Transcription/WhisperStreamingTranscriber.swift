@@ -28,6 +28,10 @@ public actor WhisperStreamingTranscriber: StreamingTranscriber {
     /// a buffer to be transcribed. Keyboard clicks and instrumental music fall
     /// below this and are discarded instead of fed to Whisper as noise.
     private let voicedSpeechRatioThreshold: Float = 0.20
+    /// Minimum number of *consecutive* voiced frames required. Speech sustains
+    /// voicing across many frames, whereas isolated impulsive sounds (knocks,
+    /// claps, door slams, taps) produce at most a brief fluke of voicing.
+    private let minVoicedRunFrames = 3
 
     private var pending: [Float] = []
     private var emittedMs: Int64 = 0
@@ -152,12 +156,13 @@ public actor WhisperStreamingTranscriber: StreamingTranscriber {
     }
 
     /// Voice-activity gate that rejects buffers dominated by non-speech sounds
-    /// such as keyboard clicks or background music. Speech has a periodic
-    /// (voiced) harmonic structure in the 80–350 Hz pitch range across a
-    /// meaningful fraction of frames; keyboard clicks are impulsive/broadband
-    /// with almost no voiced frames, and instrumental music rarely sustains a
-    /// speech-range fundamental. Returns true only when enough loud frames are
-    /// voiced.
+    /// such as keyboard clicks, background music, knocking, claps, or door
+    /// slams. Speech has a periodic (voiced) harmonic structure in the 80–350 Hz
+    /// pitch range that is *sustained* across consecutive frames; keyboard
+    /// clicks and knocks are impulsive/broadband with almost no voiced frames,
+    /// and instrumental music rarely sustains a speech-range fundamental.
+    /// Returns true only when enough loud frames are voiced AND the voicing is
+    /// sustained (not an isolated transient).
     private func containsVoicedSpeech(_ samples: [Float]) -> Bool {
         let frameSize = 2048
         guard samples.count >= frameSize else { return false }
@@ -173,6 +178,8 @@ public actor WhisperStreamingTranscriber: StreamingTranscriber {
 
         var analyzedFrames = 0
         var voicedFrames = 0
+        var currentVoicedRun = 0
+        var longestVoicedRun = 0
         var start = 0
         while start + frameSize <= samples.count {
             var energy: Float = 0
@@ -186,14 +193,21 @@ public actor WhisperStreamingTranscriber: StreamingTranscriber {
                 analyzedFrames += 1
                 if framePitch(samples, start: start, frameSize: frameSize, minLag: minLag, maxLag: maxLag, energy: energy) != nil {
                     voicedFrames += 1
+                    currentVoicedRun += 1
+                    longestVoicedRun = max(longestVoicedRun, currentVoicedRun)
+                } else {
+                    currentVoicedRun = 0
                 }
+            } else {
+                // A quiet gap breaks the voiced run; speech voicing is contiguous.
+                currentVoicedRun = 0
             }
             start += frameSize / 2 // 50% overlap
         }
 
         guard analyzedFrames > 0 else { return false }
         let voicedRatio = Float(voicedFrames) / Float(analyzedFrames)
-        return voicedRatio >= voicedSpeechRatioThreshold
+        return voicedRatio >= voicedSpeechRatioThreshold && longestVoicedRun >= minVoicedRunFrames
     }
 
     /// Estimates the mean fundamental frequency (pitch) of the buffer via
