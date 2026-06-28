@@ -1,0 +1,24 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+
+# Python virtualenv (diarization)
+.venv-diarization/
+**/__pycache__/
+*.pyc
+
+# Downloaded ML models / caches
+models/
+*.bin
+*.gguf
+*.pt
+*.ckpt
+
+# macOS
+.DS_Store
+
+# Logs / temp
+*.log
+/tmp/
