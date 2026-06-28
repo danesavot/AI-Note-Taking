@@ -14,7 +14,7 @@ private enum AppInitializer {
     static func initialize() {
         AppConfig.initialize()
     }
-    static let initialized = initialize()
+    static let initialized: Void = initialize()
 }
 
 @main
@@ -69,52 +69,43 @@ final class AppInitializationState: ObservableObject {
         
         // Initialize on background thread to avoid blocking UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                guard let self = self else { return }
-                
-                bgLogger.info("Starting initialization...")
-                
-                // Validate requirements
-                let errors = AppConfig.validateRequirements()
-                if !errors.isEmpty {
-                    for error in errors {
-                        bgLogger.warning(error)
-                    }
+            guard let self = self else { return }
+
+            bgLogger.info("Starting initialization...")
+
+            // Validate requirements
+            let errors = AppConfig.validateRequirements()
+            if !errors.isEmpty {
+                for error in errors {
+                    bgLogger.warning(error)
                 }
+            }
 
-                let dbPath = AppConfig.databasePath
-                let store = (try? SQLiteMeetingStore(path: dbPath)) ?? (try! SQLiteMeetingStore(path: ":memory:"))
-                let whisper = WhisperCPPBridge(modelPath: AppConfig.whisperModelPath)
-                let embedder = AppConfig.useEmbeddingDiarization
-                    ? SpeakerEmbedder(
-                        pythonPath: AppConfig.diarizationPythonPath,
-                        scriptPath: AppConfig.diarizationEmbedScriptPath
-                    )
-                    : nil
-                let transcriber = WhisperStreamingTranscriber(engine: whisper, embedder: embedder)
-                let summarizer = LlamaSummarizer(engine: MockLlamaEngine())
-
-                let newContainer = DependencyContainer(
-                    audioCaptureService: HybridAudioCaptureService(),
-                    transcriber: transcriber,
-                    diarizer: PyannoteDiarizer(scriptPath: AppConfig.diarizationScriptPath),
-                    summarizer: summarizer,
-                    meetingStore: store,
-                    transcriptRetriever: store
+            let dbPath = AppConfig.databasePath
+            let store = (try? SQLiteMeetingStore(path: dbPath)) ?? (try! SQLiteMeetingStore(path: ":memory:"))
+            let whisper = WhisperCPPBridge(modelPath: AppConfig.whisperModelPath)
+            let embedder = AppConfig.useEmbeddingDiarization
+                ? SpeakerEmbedder(
+                    pythonPath: AppConfig.diarizationPythonPath,
+                    scriptPath: AppConfig.diarizationEmbedScriptPath
                 )
-                
-                DispatchQueue.main.async { [weak self] in
-                    self?.container = newContainer
-                    self?.isInitialized = true
-                    bgLogger.info("Application initialized successfully")
-                }
-            } catch {
-                let errorMsg = "Initialization failed: \(error.localizedDescription)"
-                bgLogger.error(errorMsg)
-                DispatchQueue.main.async { [weak self] in
-                    self?.initializationError = errorMsg
-                    self?.isInitialized = true
-                }
+                : nil
+            let transcriber = WhisperStreamingTranscriber(engine: whisper, embedder: embedder)
+            let summarizer = LlamaSummarizer(engine: MockLlamaEngine())
+
+            let newContainer = DependencyContainer(
+                audioCaptureService: HybridAudioCaptureService(),
+                transcriber: transcriber,
+                diarizer: PyannoteDiarizer(scriptPath: AppConfig.diarizationScriptPath),
+                summarizer: summarizer,
+                meetingStore: store,
+                transcriptRetriever: store
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                self?.container = newContainer
+                self?.isInitialized = true
+                bgLogger.info("Application initialized successfully")
             }
         }
     }
