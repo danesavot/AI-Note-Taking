@@ -17,6 +17,10 @@ public actor HybridAudioCaptureService: AudioCaptureService {
     private var flushTask: Task<Void, Never>?
     private static let flushIntervalNanos: UInt64 = 500_000_000 // 0.5s
 
+    /// Conditions the mixed stream to human-voice frequencies and gates out
+    /// non-speech background noise. `nil` when voice filtering is disabled.
+    private let voiceFilter: VoiceFilter? = AppConfig.voiceFilterEnabled ? VoiceFilter() : nil
+
     public init() {
         if #available(macOS 14.0, *) {
             systemAudioCapture = SystemAudioCapture()
@@ -117,6 +121,12 @@ public actor HybridAudioCaptureService: AudioCaptureService {
 
         micQueue.removeAll(keepingCapacity: true)
         systemQueue.removeAll(keepingCapacity: true)
+
+        // Restrict to the human-voice band and silence non-speech noise so
+        // transcription/diarization only see people talking.
+        if let voiceFilter {
+            mixed = voiceFilter.process(mixed)
+        }
 
         let chunk = PCMChunk(
             source: .system,

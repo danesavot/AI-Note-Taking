@@ -6,6 +6,28 @@ public struct AppConfig {
     public static let audioSampleRate: Int = 16_000
     public static let audioChannels: Int = 1
     public static let audioBufferSize: UInt32 = 2048
+
+    // MARK: - Voice Filter Configuration
+    /// When enabled, captured audio is band-passed to the human-voice frequency
+    /// range and gated so that non-speech background noise is silenced before it
+    /// reaches transcription/diarization.
+    public static let voiceFilterEnabled: Bool = true
+    /// Lower edge of the retained voice band (Hz). Removes low-frequency rumble,
+    /// AC hum, HVAC and desk thumps below the human pitch range.
+    public static let voiceBandLowHz: Double = 85
+    /// Upper edge of the retained voice band (Hz). Removes high-frequency hiss,
+    /// keyboard clicks and other non-speech energy above speech intelligibility.
+    public static let voiceBandHighHz: Double = 3_800
+    /// Absolute RMS floor (0...1) below which a frame is treated as silence even
+    /// if it rises above the adaptive noise floor.
+    public static let voiceGateRMSFloor: Float = 0.006
+    /// Multiple of the adaptive noise floor a frame's RMS must exceed to be
+    /// considered speech. Higher = more aggressive noise rejection.
+    public static let voiceGateNoiseMultiplier: Float = 2.5
+    /// Milliseconds of audio to keep passing after the last detected speech frame
+    /// so word endings are not clipped by the gate.
+    public static let voiceGateHangoverMs: Int = 250
+
     
     // MARK: - Transcription Configuration
     public static let transcriptionWindowSeconds: Int = 8
